@@ -1,0 +1,83 @@
+//@version=5
+indicator("BTC.D + USDT.D vs BTC vs ALT/BTC - Long/Short Confirmation", overlay=true)
+
+// ===== Inputs =====
+altSymbol    = input.symbol("BINANCE:ETHUSDT", title="Altcoin Symbol (USDT)")
+btcSymbol    = input.symbol("BINANCE:BTCUSDT", title="Bitcoin Symbol")
+btcdSymbol   = input.symbol("CRYPTOCAP:BTC.D", title="BTC Dominance Symbol")
+usdtdSymbol  = input.symbol("CRYPTOCAP:USDT.D", title="USDT Dominance Symbol")
+maLen        = input.int(50, title="MA Length for Trend Detection", minval=2)
+confirmClose = input.bool(true, title="Only signal on closed bars (no repaint)")
+freshOnly    = input.bool(true, title="Mark only the first bar of each signal")
+
+// ===== Fetch data on current chart timeframe =====
+btcdClose  = request.security(btcdSymbol, timeframe.period, close)
+usdtdClose = request.security(usdtdSymbol, timeframe.period, close)
+btcClose   = request.security(btcSymbol, timeframe.period, close)
+altClose   = request.security(altSymbol, timeframe.period, close)
+
+// Alt/BTC ratio
+altBtcRatio = altClose / btcClose
+
+// ===== Moving averages for trend detection =====
+btcdMA   = ta.ema(btcdClose, maLen)
+usdtdMA  = ta.ema(usdtdClose, maLen)
+btcMA    = ta.ema(btcClose, maLen)
+ratioMA  = ta.ema(altBtcRatio, maLen)
+
+// ===== Trend detection: price vs MA + MA slope =====
+btcdUp   = btcdClose > btcdMA and btcdMA > btcdMA[1]
+btcdDown = btcdClose < btcdMA and btcdMA < btcdMA[1]
+
+usdtdUp   = usdtdClose > usdtdMA and usdtdMA > usdtdMA[1]
+usdtdDown = usdtdClose < usdtdMA and usdtdMA < usdtdMA[1]
+
+btcUp   = btcClose > btcMA and btcMA > btcMA[1]
+btcDown = btcClose < btcMA and btcMA < btcMA[1]
+
+ratioUp   = altBtcRatio > ratioMA and ratioMA > ratioMA[1]
+ratioDown = altBtcRatio < ratioMA and ratioMA < ratioMA[1]
+
+// ===== Main conditions =====
+// Long: BTC.D down + BTC up + ALT/BTC up + USDT.D down
+longRaw  = btcdDown and btcUp and ratioUp and usdtdDown
+// Short (opposite): BTC.D up + BTC down + ALT/BTC down + USDT.D up
+shortRaw = btcdUp and btcDown and ratioDown and usdtdUp
+
+// Gate on bar close so realtime ticks can't flash signals that later vanish
+barOk        = not confirmClose or barstate.isconfirmed
+longConfirm  = longRaw and barOk
+shortConfirm = shortRaw and barOk
+
+// First bar of a new signal (avoids an alert/marker on every bar of a trend)
+longNew  = longConfirm and not longRaw[1]
+shortNew = shortConfirm and not shortRaw[1]
+
+longMark  = freshOnly ? longNew : longConfirm
+shortMark = freshOnly ? shortNew : shortConfirm
+
+// ===== Plot signals on chart =====
+plotshape(longMark, title="Long Confirm", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(shortMark, title="Short Confirm", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+bgcolor(longConfirm ? color.new(color.green, 85) : shortConfirm ? color.new(color.red, 85) : na)
+
+// ===== Alerts =====
+alertcondition(longMark, title="Altcoin Long Confirm", message="BTC.D down + BTC up + ALT/BTC up + USDT.D down -> Long Confirmed")
+alertcondition(shortMark, title="Altcoin Short Confirm", message="BTC.D up + BTC down + ALT/BTC down + USDT.D up -> Short Confirmed")
+
+// ===== Status table on chart =====
+// Shows the live (possibly unconfirmed) state of each leg on the last bar
+var table statusTable = table.new(position.top_right, 2, 5, border_width=1)
+if barstate.islast
+    table.cell(statusTable, 0, 0, "BTC.D", bgcolor=color.gray, text_color=color.white)
+    table.cell(statusTable, 1, 0, btcdUp ? "Up" : btcdDown ? "Down" : "Flat", bgcolor=btcdUp ? color.red : btcdDown ? color.green : color.gray, text_color=color.white)
+    table.cell(statusTable, 0, 1, "USDT.D", bgcolor=color.gray, text_color=color.white)
+    table.cell(statusTable, 1, 1, usdtdUp ? "Up" : usdtdDown ? "Down" : "Flat", bgcolor=usdtdUp ? color.red : usdtdDown ? color.green : color.gray, text_color=color.white)
+    table.cell(statusTable, 0, 2, "BTC", bgcolor=color.gray, text_color=color.white)
+    table.cell(statusTable, 1, 2, btcUp ? "Up" : btcDown ? "Down" : "Flat", bgcolor=btcUp ? color.green : btcDown ? color.red : color.gray, text_color=color.white)
+    table.cell(statusTable, 0, 3, "ALT/BTC", bgcolor=color.gray, text_color=color.white)
+    table.cell(statusTable, 1, 3, ratioUp ? "Up" : ratioDown ? "Down" : "Flat", bgcolor=ratioUp ? color.green : ratioDown ? color.red : color.gray, text_color=color.white)
+    table.cell(statusTable, 0, 4, "Signal", bgcolor=color.gray, text_color=color.white)
+    signalText = longRaw ? "LONG" : shortRaw ? "SHORT" : "No Signal"
+    table.cell(statusTable, 1, 4, signalText, bgcolor=longRaw ? color.green : shortRaw ? color.red : color.gray, text_color=color.white)
